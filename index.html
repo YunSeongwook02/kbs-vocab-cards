@@ -87,7 +87,14 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--indigo);outline
 .opt .h{font-size:13px;color:var(--muted);margin-left:2px}
 .opt.ok{border-color:var(--ok);background:var(--ok-soft)}
 .opt.bad{border-color:var(--bad);background:var(--bad-soft)}
-.opt:disabled{cursor:default}
+.opt:disabled{cursor:default;color:var(--ink);opacity:1}
+.opt .ot{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.opt .od{font-size:13px;font-weight:400;color:var(--muted);line-height:1.55;word-break:keep-all}
+.opt .od p{margin:0}
+.opt .od p+p{margin-top:3px}
+.opt .mark{font-size:11px;font-weight:600;margin-left:6px;padding:1px 7px;border-radius:999px;vertical-align:middle}
+.opt.ok .mark{background:var(--ok);color:var(--surface)}
+.opt.bad .mark{background:var(--bad);color:var(--surface)}
 .explain{border-radius:12px;background:var(--paper);padding:12px 14px;font-size:14px;display:flex;flex-direction:column;gap:4px}
 .explain .w{font-family:var(--display);font-weight:700;font-size:16px}
 .verdict{font-weight:600}
@@ -243,20 +250,29 @@ const isPred = w => /다$/.test(w);
 const QPOOL = ENTRIES.filter(e=>EX[e.id]&&EX[e.id].length);
 const Q={tag:"전체",list:[],i:0,ok:0,bad:0};
 
-function distractors(e){
+const LAST = new Map(); // entry id -> what it looked like last time, so a reshuffle never repeats it
+function distractors(e, avoid){
   const g = grp(e.w);
   const bad = o => o.a===e.a || o.w===e.w&&!e.h || (g>=0&&grp(o.w)===g) || o.q===e.q;
   const homo = shuffle(ENTRIES.filter(o=>o.w===e.w&&o.a!==e.a&&o.q!==e.q&&!(g>=0&&e.w==="전수")));
   const same = shuffle(ENTRIES.filter(o=>!bad(o)&&o.tag===e.tag&&isPred(o.w)===isPred(e.w)&&o.w!==e.w));
   const rest = shuffle(ENTRIES.filter(o=>!bad(o)&&o.w!==e.w));
+  const tiers = [homo.slice(0,1+Math.floor(Math.random()*2)), same, rest];
+  const seq = tiers.flatMap(t=>[...t.filter(o=>!avoid.has(o.id)),...t.filter(o=>avoid.has(o.id))]);
   const out=[],seen=new Set([e.a]);
-  for(const o of [...homo.slice(0,2),...same,...rest]){ if(seen.has(o.a)||out.some(x=>x.w===o.w&&!o.h))continue; seen.add(o.a); out.push(o); if(out.length===4)break; }
+  for(const o of seq){ if(seen.has(o.a)||out.some(x=>x.w===o.w&&!o.h))continue; seen.add(o.a); out.push(o); if(out.length===4)break; }
   return out;
 }
 function qStart(){
   Q.list = shuffle(QPOOL.filter(e=>Q.tag==="전체"||e.tag===Q.tag)).map(e=>{
-    const ex = EX[e.id]; const s = ex[Math.floor(Math.random()*ex.length)];
-    return {e, s, opts: shuffle([e,...distractors(e)])};
+    const prev = LAST.get(e.id) || {ids:[],pos:-1,s:null};
+    const ex = EX[e.id];
+    const cands = ex.length>1 ? ex.filter(x=>x!==prev.s) : ex;
+    const s = cands[Math.floor(Math.random()*cands.length)];
+    let opts = shuffle([e,...distractors(e,new Set(prev.ids))]);
+    for(let t=0;t<8&&prev.pos>=0&&opts.indexOf(e)===prev.pos;t++) opts=shuffle(opts);
+    LAST.set(e.id,{ids:opts.filter(o=>o!==e).map(o=>o.id),pos:opts.indexOf(e),s});
+    return {e, s, opts};
   });
   Q.i=0;Q.ok=0;Q.bad=0;qRender();
 }
@@ -287,7 +303,7 @@ function qRender(){
     <div class="stem">다음 문장의 빈칸에 들어갈 말로 가장 알맞은 것은? <span style="white-space:nowrap">(기본형으로 제시)</span></div>
     <div class="sent">${body}</div>
     <div class="src">표준국어대사전 용례${src?` · ≪${esc(src)}≫`:""}</div>
-    <ol class="opts">${it.opts.map((o,k)=>`<li><button class="opt" data-k="${k}"><span class="n">${nums[k]}</span><span>${esc(o.w)}${o.h?`<span class="h">(${esc(o.h)})</span>`:""}</span></button></li>`).join("")}</ol>
+    <ol class="opts">${it.opts.map((o,k)=>`<li><button class="opt" data-k="${k}"><span class="n">${nums[k]}</span><span class="ot"><span class="ow">${esc(o.w)}${o.h?`<span class="h">(${esc(o.h)})</span>`:""}</span><span class="od" hidden></span></span></button></li>`).join("")}</ol>
     <div id="qExp"></div>
   </div>`;
   $("qBox").querySelectorAll(".opt").forEach(b=>b.onclick=()=>answer(+b.dataset.k));
@@ -297,16 +313,15 @@ function answer(k){
   const pick=it.opts[k], right=pick===it.e;
   right?Q.ok++:Q.bad++;
   const btns=$("qBox").querySelectorAll(".opt");
-  btns.forEach((b,j)=>{b.disabled=true;if(it.opts[j]===it.e)b.classList.add("ok");else if(j===k)b.classList.add("bad")});
+  btns.forEach((b,j)=>{b.disabled=true;const o=it.opts[j];
+    if(o===it.e)b.classList.add("ok");else if(j===k)b.classList.add("bad");
+    const od=b.querySelector(".od");od.innerHTML=defHTML(o.q);od.hidden=false;
+    if(o===it.e||j===k){const m=document.createElement("span");m.className="mark";m.textContent=o===it.e?"정답":"내 선택";b.querySelector(".ow").appendChild(m)}
+  });
   const {body}=sentenceHTML(it.s,it.e,right?"ok":"bad");
   $("qBox").querySelector(".sent").innerHTML=body;
   const e=it.e;
-  $("qExp").innerHTML=`<div class="explain">
-    <div class="verdict ${right?"ok":"bad"}">${right?"정답입니다.":"오답입니다. 정답은 "+nums(it)+"번."}</div>
-    <div class="w">${esc(e.w)}${e.h?` <span class="hanja" style="font-size:14px">${esc(e.h)}</span>`:""}</div>
-    <div>${defHTML(e.q)}</div>
-    ${right?"":`<div class="stem" style="margin-top:4px">고른 답 · ${esc(pick.w)}${pick.h?"("+esc(pick.h)+")":""}: ${esc(pick.q.replace(/\n/g," "))}</div>`}
-  </div>
+  $("qExp").innerHTML=`<div class="explain"><div class="verdict ${right?"ok":"bad"}">${right?"정답입니다.":"오답입니다. 정답은 "+nums(it)+"번."} 보기 전체의 뜻을 함께 확인해 보세요.</div></div>
   <button class="btn primary" id="qNext" style="width:100%;margin-top:12px">${Q.i+1<Q.list.length?"다음 문제":"결과 보기"}</button>`;
   $("qOk").textContent=Q.ok;$("qBad").textContent=Q.bad;
   $("qNext").onclick=()=>{Q.i++;qRender();window.scrollTo({top:0,behavior:"smooth"})};
