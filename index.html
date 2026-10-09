@@ -63,7 +63,8 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--indigo);outline
 .hint{font-size:12px;color:var(--muted);text-align:center}
 .ex{font-size:13px;color:var(--muted);border-top:1px dashed var(--line);padding-top:10px;word-break:keep-all}
 .ex b{color:var(--ink);font-weight:600}
-.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.actions{display:grid;grid-template-columns:auto 1fr 1fr;gap:10px}
+.q .actions{margin-top:4px}
 .btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);font:600 15px var(--body);padding:14px 10px;border-radius:12px;cursor:pointer}
 .btn.primary{background:var(--indigo);border-color:var(--indigo);color:var(--surface)}
 .btn.no{color:var(--bad)}
@@ -137,10 +138,11 @@ footer{font-size:12px;color:var(--muted);line-height:1.6}
       </div>
     </div>
     <div class="actions">
+      <button class="btn" id="fBack" disabled aria-label="직전 선택 취소하고 이전 카드로">← 이전</button>
       <button class="btn no" id="again">몰라요 · 다시</button>
       <button class="btn yes" id="know">알아요</button>
     </div>
-    <p class="hint">카드를 눌러 뒤집기 · "몰라요"를 누른 카드는 이번 회차 뒤쪽에 다시 나옵니다</p>
+    <p class="hint">카드를 눌러 뒤집기 · "몰라요"를 누른 카드는 이번 회차 뒤쪽에 다시 나오고, "이전"으로 직전 선택을 취소할 수 있어요</p>
   </section>
 
   <!-- QUIZ -->
@@ -191,10 +193,10 @@ $("tabFlip").onclick=()=>setTab("flip");
 $("tabQuiz").onclick=()=>setTab("quiz");
 
 // ---------- flashcards ----------
-const F={dir:"word",tag:"전체",queue:[],pos:0,total:0,know:0,again:0,flipped:false};
+const F={dir:"word",tag:"전체",queue:[],hist:[],pos:0,total:0,know:0,again:0,flipped:false};
 function fStart(){
   const pool = CARDS.filter(c=>F.tag==="전체"||c.tag===F.tag);
-  F.queue = shuffle(pool); F.total = pool.length; F.pos=0; F.know=0; F.again=0; fRender();
+  F.queue = shuffle(pool); F.hist = []; F.total = pool.length; F.pos=0; F.know=0; F.again=0; fRender();
 }
 function exampleFor(card){
   for(const id of shuffle(card.ids)){const ex=EX[id];if(ex&&ex.length){const s=ex[Math.floor(Math.random()*ex.length)];return esc(s.replace(/≪[^≫]*≫/g,"").trim()).replace(/【([^】]*)】/g,"<b>$1</b>")}}
@@ -206,7 +208,7 @@ function fRender(){
   $("fPos").textContent = Math.min(F.know+1,F.total); $("fTot").textContent=F.total;
   $("fKnow").textContent=F.know; $("fAgain").textContent=F.again;
   $("flipBar").style.width = (F.total?F.know/F.total*100:0)+"%";
-  $("again").disabled=$("know").disabled=!c;
+  $("again").disabled=$("know").disabled=!c; $("fBack").disabled=!F.hist.length;
   if(!c){
     $("front").innerHTML=`<div class="main"><div class="word">끝!</div><div class="def">${F.total}개 카드를 모두 외웠어요. "다시" ${F.again}번.</div><button class="btn primary" id="fRe" style="margin-top:12px">새로 섞어서 다시</button></div>`;
     $("back").innerHTML=""; $("fRe").onclick=e=>{e.stopPropagation();fStart()}; return;
@@ -234,8 +236,14 @@ function sizeCard(){
 function flip(){ if(!F.queue[0])return; F.flipped=!F.flipped; $("card").classList.toggle("flipped",F.flipped); }
 $("card").addEventListener("click",flip);
 $("card").addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();flip()}});
-$("know").onclick=()=>{F.queue.shift();F.know++;fRender()};
-$("again").onclick=()=>{const c=F.queue.shift();F.again++;const at=Math.min(F.queue.length,3+Math.floor(Math.random()*Math.max(1,F.queue.length-3)));F.queue.splice(at,0,c);fRender()};
+$("know").onclick=()=>{const c=F.queue.shift();F.hist.push({c,kind:"know"});F.know++;fRender()};
+$("again").onclick=()=>{const c=F.queue.shift();F.hist.push({c,kind:"again"});F.again++;const at=Math.min(F.queue.length,3+Math.floor(Math.random()*Math.max(1,F.queue.length-3)));F.queue.splice(at,0,c);fRender()};
+$("fBack").onclick=()=>{
+  const h=F.hist.pop(); if(!h)return;
+  if(h.kind==="know"){F.know--}
+  else{F.again--;const i=F.queue.indexOf(h.c);if(i>=0)F.queue.splice(i,1)}
+  F.queue.unshift(h.c); fRender();
+};
 $("reshuffle").onclick=fStart;
 $("dirWord").onclick=()=>{F.dir="word";$("dirWord").setAttribute("aria-pressed",true);$("dirDef").setAttribute("aria-pressed",false);fRender()};
 $("dirDef").onclick=()=>{F.dir="def";$("dirDef").setAttribute("aria-pressed",true);$("dirWord").setAttribute("aria-pressed",false);fRender()};
@@ -294,8 +302,8 @@ function qRender(){
   $("qPos").textContent=Math.min(Q.i+1,n); $("quizBar").style.width=(n?Q.i/n*100:0)+"%";
   const it=Q.list[Q.i];
   if(!it){
-    $("qBox").innerHTML=`<div class="q done"><div class="label">결과</div><div class="big">${Q.ok} / ${n}</div><p class="stem">정답률 ${n?Math.round(Q.ok/n*100):0}%</p><button class="btn primary" id="qAgain">새로 섞어서 다시 풀기</button></div>`;
-    $("qAgain").onclick=qStart; return;
+    $("qBox").innerHTML=`<div class="q done"><div class="label">결과</div><div class="big">${Q.ok} / ${n}</div><p class="stem">정답률 ${n?Math.round(Q.ok/n*100):0}%</p><div class="actions" style="grid-template-columns:1fr 1fr"><button class="btn" id="qLast" ${n?"":"disabled"}>← 마지막 문제</button><button class="btn primary" id="qAgain">새로 섞어서 다시</button></div></div>`;
+    $("qAgain").onclick=qStart; $("qLast").onclick=()=>{Q.i=n-1;qRender()}; return;
   }
   const {body,src}=sentenceHTML(it.s,it.e,null);
   const nums="①②③④⑤";
@@ -305,13 +313,24 @@ function qRender(){
     <div class="src">표준국어대사전 용례${src?` · ≪${esc(src)}≫`:""}</div>
     <ol class="opts">${it.opts.map((o,k)=>`<li><button class="opt" data-k="${k}"><span class="n">${nums[k]}</span><span class="ot"><span class="ow">${esc(o.w)}${o.h?`<span class="h">(${esc(o.h)})</span>`:""}</span><span class="od" hidden></span></span></button></li>`).join("")}</ol>
     <div id="qExp"></div>
+    <div class="actions" style="grid-template-columns:1fr 1fr"><button class="btn" id="qPrev">← 이전 문제</button><button class="btn primary" id="qNext" disabled>${Q.i+1<n?"다음 문제":"결과 보기"}</button></div>
   </div>`;
   $("qBox").querySelectorAll(".opt").forEach(b=>b.onclick=()=>answer(+b.dataset.k));
+  $("qPrev").disabled=Q.i===0;
+  $("qPrev").onclick=()=>{Q.i--;qRender();window.scrollTo({top:0,behavior:"smooth"})};
+  $("qNext").onclick=()=>{Q.i++;qRender();window.scrollTo({top:0,behavior:"smooth"})};
+  if(it.done)paint(it);
 }
 function answer(k){
-  const it=Q.list[Q.i]; if(it.done)return; it.done=true;
-  const pick=it.opts[k], right=pick===it.e;
-  right?Q.ok++:Q.bad++;
+  const it=Q.list[Q.i]; if(it.done)return; it.done=true; it.pick=k;
+  it.opts[k]===it.e?Q.ok++:Q.bad++;
+  $("qOk").textContent=Q.ok;$("qBad").textContent=Q.bad;
+  paint(it);
+  $("qNext").focus({preventScroll:true});
+}
+// draws the answered state of a question (also used when coming back to it)
+function paint(it){
+  const k=it.pick, pick=it.opts[k], right=pick===it.e;
   const btns=$("qBox").querySelectorAll(".opt");
   btns.forEach((b,j)=>{b.disabled=true;const o=it.opts[j];
     if(o===it.e)b.classList.add("ok");else if(j===k)b.classList.add("bad");
@@ -320,12 +339,8 @@ function answer(k){
   });
   const {body}=sentenceHTML(it.s,it.e,right?"ok":"bad");
   $("qBox").querySelector(".sent").innerHTML=body;
-  const e=it.e;
-  $("qExp").innerHTML=`<div class="explain"><div class="verdict ${right?"ok":"bad"}">${right?"정답입니다.":"오답입니다. 정답은 "+nums(it)+"번."} 보기 전체의 뜻을 함께 확인해 보세요.</div></div>
-  <button class="btn primary" id="qNext" style="width:100%;margin-top:12px">${Q.i+1<Q.list.length?"다음 문제":"결과 보기"}</button>`;
-  $("qOk").textContent=Q.ok;$("qBad").textContent=Q.bad;
-  $("qNext").onclick=()=>{Q.i++;qRender();window.scrollTo({top:0,behavior:"smooth"})};
-  $("qNext").focus({preventScroll:true});
+  $("qExp").innerHTML=`<div class="explain"><div class="verdict ${right?"ok":"bad"}">${right?"정답입니다.":"오답입니다. 정답은 "+nums(it)+"번."} 보기 전체의 뜻을 함께 확인해 보세요.</div></div>`;
+  $("qNext").disabled=false;
 }
 function nums(it){return "①②③④⑤"[it.opts.indexOf(it.e)]}
 $("qRestart").onclick=qStart;
