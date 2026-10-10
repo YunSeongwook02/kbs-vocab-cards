@@ -185,9 +185,11 @@ function chipRow(el, onPick){
 
 // ---------- tabs ----------
 function setTab(t){
+  tabNow=t;
   $("tabFlip").setAttribute("aria-pressed",t==="flip");$("tabQuiz").setAttribute("aria-pressed",t==="quiz");
   $("flip").hidden = t!=="flip"; $("quiz").hidden = t!=="quiz";
   try{localStorage.setItem("kbs-tab",t)}catch(e){}
+  save();
 }
 $("tabFlip").onclick=()=>setTab("flip");
 $("tabQuiz").onclick=()=>setTab("quiz");
@@ -203,6 +205,7 @@ function exampleFor(card){
   return "";
 }
 function fRender(){
+  save();
   const c = F.queue[0];
   $("card").classList.remove("flipped"); F.flipped=false;
   $("fPos").textContent = Math.min(F.know+1,F.total); $("fTot").textContent=F.total;
@@ -233,7 +236,7 @@ function sizeCard(){
   [f,b].forEach(x=>{x.style.position="";});
   $("card").style.minHeight=h+"px";
 }
-function flip(){ if(!F.queue[0])return; F.flipped=!F.flipped; $("card").classList.toggle("flipped",F.flipped); }
+function flip(){ if(!F.queue[0])return; F.flipped=!F.flipped; $("card").classList.toggle("flipped",F.flipped); save(); }
 $("card").addEventListener("click",flip);
 $("card").addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();flip()}});
 $("know").onclick=()=>{const c=F.queue.shift();F.hist.push({c,kind:"know"});F.know++;fRender()};
@@ -297,6 +300,7 @@ function sentenceHTML(s,e,state){
   return {body, src};
 }
 function qRender(){
+  save();
   const n=Q.list.length;
   $("qTot").textContent=n; $("qOk").textContent=Q.ok; $("qBad").textContent=Q.bad;
   $("qPos").textContent=Math.min(Q.i+1,n); $("quizBar").style.width=(n?Q.i/n*100:0)+"%";
@@ -325,7 +329,7 @@ function answer(k){
   const it=Q.list[Q.i]; if(it.done)return; it.done=true; it.pick=k;
   it.opts[k]===it.e?Q.ok++:Q.bad++;
   $("qOk").textContent=Q.ok;$("qBad").textContent=Q.bad;
-  paint(it);
+  paint(it); save();
   $("qNext").focus({preventScroll:true});
 }
 // draws the answered state of a question (also used when coming back to it)
@@ -346,10 +350,51 @@ function nums(it){return "①②③④⑤"[it.opts.indexOf(it.e)]}
 $("qRestart").onclick=qStart;
 chipRow($("qTagRow"),t=>{Q.tag=t;qStart()});
 
+// ---------- autosave / restore ----------
+// iOS may unload the page in the background, so progress is kept on the device and restored on load.
+const SKEY="kbs-state-v1", MAXAGE=14*24*3600*1000; // 14 days
+const SIG=ENTRIES.length+":"+ENTRIES.reduce((h,e)=>(h*31+e.a.length+e.q.length)%1000003,7);
+let tabNow="flip", restoring=true;
+const cardIdx=new Map(CARDS.map((c,i)=>[c,i]));
+function save(){
+  if(restoring)return;
+  try{
+    localStorage.setItem(SKEY,JSON.stringify({v:1,sig:SIG,t:Date.now(),tab:tabNow,
+      F:{dir:F.dir,tag:F.tag,total:F.total,know:F.know,again:F.again,flipped:F.flipped,
+         queue:F.queue.map(c=>cardIdx.get(c)),hist:F.hist.map(h=>[cardIdx.get(h.c),h.kind])},
+      Q:{tag:Q.tag,i:Q.i,ok:Q.ok,bad:Q.bad,
+         list:Q.list.map(it=>[it.e.id,EX[it.e.id].indexOf(it.s),it.opts.map(o=>o.id),it.done?1:0,it.pick??-1])}}));
+  }catch(e){}
+}
+function restore(){
+  try{
+    const d=JSON.parse(localStorage.getItem(SKEY)||"null");
+    if(!d||d.v!==1||d.sig!==SIG||Date.now()-d.t>MAXAGE)return null;
+    const f=d.F,q=d.Q;
+    if(!f.queue.every(i=>CARDS[i])||!f.hist.every(h=>CARDS[h[0]]))return null;
+    if(!q.list.every(r=>ENTRIES[r[0]]&&EX[r[0]]&&EX[r[0]][r[1]]&&r[2].every(id=>ENTRIES[id])))return null;
+    Object.assign(F,{dir:f.dir,tag:f.tag,total:f.total,know:f.know,again:f.again,flipped:false,
+      queue:f.queue.map(i=>CARDS[i]),hist:f.hist.map(h=>({c:CARDS[h[0]],kind:h[1]}))});
+    Q.list=q.list.map(r=>{const it={e:ENTRIES[r[0]],s:EX[r[0]][r[1]],opts:r[2].map(id=>ENTRIES[id])};if(r[3]){it.done=true;it.pick=r[4]}return it});
+    Q.tag=q.tag;Q.i=q.i;Q.ok=q.ok;Q.bad=q.bad;
+    tabNow=d.tab==="quiz"?"quiz":"flip";
+    // sync controls
+    $("dirWord").setAttribute("aria-pressed",F.dir==="word");$("dirDef").setAttribute("aria-pressed",F.dir==="def");
+    $("tagRow").querySelectorAll(".chip").forEach(b=>b.setAttribute("aria-pressed",b.dataset.t===F.tag));
+    $("qTagRow").querySelectorAll(".chip").forEach(b=>b.setAttribute("aria-pressed",b.dataset.t===Q.tag));
+    return f.flipped;
+  }catch(e){return null}
+}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")save()});
+window.addEventListener("pagehide",save);
+
 // ---------- boot ----------
-fStart(); qStart();
+const r=restore();
+if(r===null){fStart();qStart()}            // nothing (valid) saved: fresh start
+else{ fRender(); qRender(); if(r&&F.queue[0]){F.flipped=true;$("card").classList.add("flipped")} }
+restoring=false;
 let saved="flip"; try{saved=localStorage.getItem("kbs-tab")||"flip"}catch(e){}
-setTab(saved==="quiz"?"quiz":"flip");
+setTab(r===null?(saved==="quiz"?"quiz":"flip"):tabNow);
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{if(F.queue[0])sizeCard()});
 </script>
 
